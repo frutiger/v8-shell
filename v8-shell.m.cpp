@@ -5,6 +5,7 @@
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <sstream>
 
 namespace {
 
@@ -150,8 +151,11 @@ int main(int argc, char *argv[])
 
     if (argc == 1 || argv[1][0] == '-') {
         std::string input;
+        int         command = 0;
         while (read(&input, std::cin, std::cout) == 0) {
-            evaluateAndPrint(std::cout, std::cerr, input, "<stdin>");
+            std::ostringstream oss;
+            oss << "<stdin:" << ++command << ">";
+            evaluateAndPrint(std::cout, std::cerr, input, oss.str());
         }
     }
     else {
