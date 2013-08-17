@@ -2,6 +2,7 @@
 
 #include <v8.h>
 
+#include <fstream>
 #include <iostream>
 #include <iterator>
 
@@ -79,7 +80,8 @@ static int read(std::string *result, std::istream& in, std::ostream& out)
 
 static int evaluate(v8::Handle<v8::Value>   *result,
                     v8::Handle<v8::Message> *errorMessage,
-                    const std::string&       input)
+                    const std::string&       input,
+                    const std::string&       inputName)
 {
     // This will catch errors within this scope
     v8::TryCatch tryCatch;
@@ -94,8 +96,9 @@ static int evaluate(v8::Handle<v8::Value>   *result,
 
     // Compile it
     v8::Handle<v8::Script> script = v8::Script::Compile(
-                                                   source,
-                                                   v8::String::New("<stdin>"));
+                                            source,
+                                            v8::String::New(inputName.data(),
+                                                            inputName.size()));
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
@@ -109,6 +112,22 @@ static int evaluate(v8::Handle<v8::Value>   *result,
     }
 
     return 0;
+}
+
+static void evaluateAndPrint(std::ostream&      outStream,
+                             std::ostream&      errorStream,
+                             const std::string& input,
+                             const std::string& inputName)
+{
+    v8::Handle<v8::Value>   result;
+    v8::Handle<v8::Message> errorMessage;
+    if (evaluate(&result, &errorMessage, input, inputName)) {
+        format(errorStream, errorMessage);
+    }
+    else {
+        outStream << "-> ";
+        format(outStream, result);
+    }
 }
 
 }  // close unnamed namespace
@@ -129,17 +148,27 @@ int main(int argc, char *argv[])
     v8::Handle<v8::Context> context = v8::Context::New(isolate);
     v8::Context::Scope      scope(context);
 
-    std::string input;
-    while (read(&input, std::cin, std::cout) == 0) {
-        v8::Handle<v8::Value>   result;
-        v8::Handle<v8::Message> errorMessage;
-        if (evaluate(&result, &errorMessage, input)) {
-            format(std::cerr, errorMessage);
+    if (argc == 1 || argv[1][0] == '-') {
+        std::string input;
+        while (read(&input, std::cin, std::cout) == 0) {
+            evaluateAndPrint(std::cout, std::cerr, input, "<stdin>");
         }
-        else {
-            std::cout << "-> ";
-            format(std::cout, result);
+    }
+    else {
+        std::filebuf fileBuffer;
+        fileBuffer.open(argv[1], std::ios_base::in);
+        if (!fileBuffer.is_open()) {
+            std::cerr << "Failed to open: " << argv[1] << std::endl;
+            return -1;
         }
+
+        std::string input;
+        std::copy(std::istreambuf_iterator<char>(&fileBuffer),
+                  std::istreambuf_iterator<char>(),
+                  std::back_inserter(input));
+        fileBuffer.close();
+
+        evaluateAndPrint(std::cout, std::cerr, input, argv[1]);
     }
 
     return 0;
