@@ -6,6 +6,9 @@
 #include <iostream>
 #include <iterator>
 #include <sstream>
+#include <vector>
+
+#include <unistd.h>
 
 namespace {
 
@@ -131,6 +134,33 @@ static void evaluateAndPrint(std::ostream&      outStream,
     }
 }
 
+static int parseOptions(std::string               *programName,
+                        bool                      *isInteractiveMode,
+                        std::vector<std::string>  *positionals,
+                        int                        argc,
+                        char                     **argv)
+{
+    *programName = argv[0];
+
+    int character;
+    while ((character = getopt(argc, argv, "i")) != -1) {
+        switch (character) {
+            case 'i': {
+                *isInteractiveMode = true;
+            } break;
+
+            default:
+                return -1;
+        }
+    }
+
+    for (int i = optind; i < argc; ++i) {
+        positionals->push_back(argv[i]);
+    }
+
+    return 0;
+}
+
 }  // close unnamed namespace
 
 int main(int argc, char *argv[])
@@ -149,20 +179,25 @@ int main(int argc, char *argv[])
     v8::Handle<v8::Context> context = v8::Context::New(isolate);
     v8::Context::Scope      scope(context);
 
-    if (argc == 1 || argv[1][0] == '-') {
-        std::string input;
-        int         command = 0;
-        while (read(&input, std::cin, std::cout) == 0) {
-            std::ostringstream oss;
-            oss << "<stdin:" << ++command << ">";
-            evaluateAndPrint(std::cout, std::cerr, input, oss.str());
-        }
+    std::string              programName;
+    bool                     isInteractiveMode = false;
+    std::vector<std::string> positionals;
+    if (parseOptions(&programName,
+                     &isInteractiveMode,
+                     &positionals,
+                     argc,
+                     argv)) {
+        std::cerr << "Usage: " << programName << " [-i] [<filename>]"
+                  << std::endl;
+        return -1;
     }
-    else {
+
+    if (positionals.size() && positionals[0] != "-") {
         std::filebuf fileBuffer;
-        fileBuffer.open(argv[1], std::ios_base::in);
+        fileBuffer.open(positionals[0], std::ios_base::in);
         if (!fileBuffer.is_open()) {
-            std::cerr << "Failed to open: " << argv[1] << std::endl;
+            std::cerr << "Usage: " << programName << " [-i] [<filename>]\n"
+                      << "Failed to open: " << positionals[0] << std::endl;
             return -1;
         }
 
@@ -172,7 +207,17 @@ int main(int argc, char *argv[])
                   std::back_inserter(input));
         fileBuffer.close();
 
-        evaluateAndPrint(std::cout, std::cerr, input, argv[1]);
+        evaluateAndPrint(std::cout, std::cerr, input, positionals[0]);
+    }
+
+    if (!positionals.size() || positionals[0] == "-" || isInteractiveMode) {
+        std::string input;
+        int         command = 0;
+        while (read(&input, std::cin, std::cout) == 0) {
+            std::ostringstream oss;
+            oss << "<stdin:" << ++command << ">";
+            evaluateAndPrint(std::cout, std::cerr, input, oss.str());
+        }
     }
 
     return 0;
