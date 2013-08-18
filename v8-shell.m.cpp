@@ -6,9 +6,6 @@
 #include <iostream>
 #include <iterator>
 #include <sstream>
-#include <vector>
-
-#include <unistd.h>
 
 namespace {
 
@@ -134,31 +131,41 @@ static void evaluateAndPrint(std::ostream&      outStream,
     }
 }
 
-static int parseOptions(std::string               *programName,
-                        bool                      *isInteractiveMode,
-                        std::vector<std::string>  *positionals,
-                        int                        argc,
-                        char                     **argv)
+
+static int evaluateFile(std::ostream&      outStream,
+                        std::ostream&      errorStream,
+                        const std::string& programName,
+                        const std::string& fileName)
 {
-    *programName = argv[0];
-
-    int character;
-    while ((character = getopt(argc, argv, "i")) != -1) {
-        switch (character) {
-            case 'i': {
-                *isInteractiveMode = true;
-            } break;
-
-            default:
-                return -1;
-        }
+    std::filebuf fileBuffer;
+    fileBuffer.open(fileName, std::ios_base::in);
+    if (!fileBuffer.is_open()) {
+        errorStream << "Usage: " << programName << " [<filename> | -]*\n"
+                    << "Failed to open: " << fileName << std::endl;
+        return -1;
     }
 
-    for (int i = optind; i < argc; ++i) {
-        positionals->push_back(argv[i]);
-    }
+    std::string input;
+    std::copy(std::istreambuf_iterator<char>(&fileBuffer),
+              std::istreambuf_iterator<char>(),
+              std::back_inserter(input));
+    fileBuffer.close();
 
+    evaluateAndPrint(outStream, errorStream, input, fileName);
     return 0;
+}
+
+static void beginReplLoop(std::istream& inStream,
+                          std::ostream& outStream,
+                          std::ostream& errorStream)
+{
+    std::string input;
+    int         command = 0;
+    while (read(&input, inStream, outStream) == 0) {
+        std::ostringstream oss;
+        oss << "<stdin:" << ++command << ">";
+        evaluateAndPrint(outStream, errorStream, input, oss.str());
+    }
 }
 
 }  // close unnamed namespace
@@ -179,44 +186,31 @@ int main(int argc, char *argv[])
     v8::Handle<v8::Context> context = v8::Context::New(isolate);
     v8::Context::Scope      scope(context);
 
-    std::string              programName;
-    bool                     isInteractiveMode = false;
-    std::vector<std::string> positionals;
-    if (parseOptions(&programName,
-                     &isInteractiveMode,
-                     &positionals,
-                     argc,
-                     argv)) {
-        std::cerr << "Usage: " << programName << " [-i] [<filename>]"
-                  << std::endl;
-        return -1;
+    if (argc == 1) {
+        beginReplLoop(std::cin, std::cout, std::cerr);
     }
+    else {
+        for (int i = 1; i < argc; ++i) {
+            if (argv[i][0] == '-') {
+                switch (argv[i][1]) {
+                    case '\0':
+                        beginReplLoop(std::cin, std::cout, std::cerr);
+                        break;
 
-    if (positionals.size() && positionals[0] != "-") {
-        std::filebuf fileBuffer;
-        fileBuffer.open(positionals[0], std::ios_base::in);
-        if (!fileBuffer.is_open()) {
-            std::cerr << "Usage: " << programName << " [-i] [<filename>]\n"
-                      << "Failed to open: " << positionals[0] << std::endl;
-            return -1;
-        }
-
-        std::string input;
-        std::copy(std::istreambuf_iterator<char>(&fileBuffer),
-                  std::istreambuf_iterator<char>(),
-                  std::back_inserter(input));
-        fileBuffer.close();
-
-        evaluateAndPrint(std::cout, std::cerr, input, positionals[0]);
-    }
-
-    if (!positionals.size() || positionals[0] == "-" || isInteractiveMode) {
-        std::string input;
-        int         command = 0;
-        while (read(&input, std::cin, std::cout) == 0) {
-            std::ostringstream oss;
-            oss << "<stdin:" << ++command << ">";
-            evaluateAndPrint(std::cout, std::cerr, input, oss.str());
+                    case 'h':
+                    default:
+                        std::cout
+                                << "Usage: " << argv[0] << " [<filename> | -]*"
+                                << std::endl;
+                        break;
+                }
+            }
+            else {
+                evaluateFile(std::cout,
+                             std::cerr,
+                             argv[0],
+                             argv[i]);
+            }
         }
     }
 
