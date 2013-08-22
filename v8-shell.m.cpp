@@ -131,25 +131,33 @@ static void evaluateAndPrint(std::ostream&      outStream,
     }
 }
 
+static int readFile(std::string        *contents,
+                    const std::string&  fileName)
+{
+    std::filebuf fileBuffer;
+    fileBuffer.open(fileName, std::ios_base::in);
+    if (!fileBuffer.is_open()) {
+        return -1;
+    }
+
+    std::copy(std::istreambuf_iterator<char>(&fileBuffer),
+              std::istreambuf_iterator<char>(),
+              std::back_inserter(*contents));
+    fileBuffer.close();
+    return 0;
+}
 
 static int evaluateFile(std::ostream&      outStream,
                         std::ostream&      errorStream,
                         const std::string& programName,
                         const std::string& fileName)
 {
-    std::filebuf fileBuffer;
-    fileBuffer.open(fileName, std::ios_base::in);
-    if (!fileBuffer.is_open()) {
+    std::string input;
+    if (readFile(&input, fileName)) {
         errorStream << "Usage: " << programName << " [<filename> | -]*\n"
                     << "Failed to open: " << fileName << std::endl;
         return -1;
     }
-
-    std::string input;
-    std::copy(std::istreambuf_iterator<char>(&fileBuffer),
-              std::istreambuf_iterator<char>(),
-              std::back_inserter(input));
-    fileBuffer.close();
 
     evaluateAndPrint(outStream, errorStream, input, fileName);
     return 0;
