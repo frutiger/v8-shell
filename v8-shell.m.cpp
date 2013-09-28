@@ -18,10 +18,10 @@ static std::ostream& format(std::ostream&           stream,
                             v8::Handle<v8::Message> message)
 {
     stream << toCString(message->Get()) << '\n';
-    v8::Handle<v8::StackTrace> stack = message->GetStackTrace();
+    auto stack = message->GetStackTrace();
     if (!stack.IsEmpty()) {
         for (int i = 0; i < stack->GetFrameCount(); ++i) {
-            v8::Handle<v8::StackFrame> frame = stack->GetFrame(i);
+            auto frame = stack->GetFrame(i);
             stream << "   at ";
             if (frame->GetFunctionName()->Length()) {
                 stream << toCString(frame->GetFunctionName()) << " ";
@@ -50,7 +50,7 @@ static int read(std::string *result, std::istream& in, std::ostream& out)
     bool escape = false;
     bool append = true;
     while (true) {
-        std::istream::int_type character = in.get();
+        auto character = in.get();
         switch (character) {
             case -1: {
                 out << "\n";
@@ -88,18 +88,16 @@ static int evaluate(v8::Handle<v8::Value>   *result,
     v8::TryCatch tryCatch;
 
     // Load the input string
-    v8::Handle<v8::String> source = v8::String::New(input.data(),
-                                                    input.length());
+    auto source = v8::String::New(input.data(), input.length());
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
     }
 
     // Compile it
-    v8::Handle<v8::Script> script = v8::Script::Compile(
-                                            source,
-                                            v8::String::New(inputName.data(),
-                                                            inputName.size()));
+    auto script = v8::Script::Compile(source,
+                                      v8::String::New(inputName.data(),
+                                                      inputName.size()));
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
@@ -181,7 +179,7 @@ static void beginReplLoop(std::istream& inStream,
 int main(int argc, char *argv[])
 {
     // Initialize global v8 variables
-    v8::Isolate *isolate = v8::Isolate::GetCurrent();
+    auto *isolate = v8::Isolate::GetCurrent();
     v8::V8::SetCaptureStackTraceForUncaughtExceptions(
                                                     true,
                                                     0x100,
@@ -191,8 +189,8 @@ int main(int argc, char *argv[])
     v8::HandleScope handles(isolate);
 
     // Create and enter a context
-    v8::Handle<v8::Context> context = v8::Context::New(isolate);
-    v8::Context::Scope      scope(context);
+    auto               context = v8::Context::New(isolate);
+    v8::Context::Scope scope(context);
 
     if (argc == 1) {
         beginReplLoop(std::cin, std::cout, std::cerr);
