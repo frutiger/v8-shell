@@ -79,7 +79,8 @@ static int read(std::string *result, std::istream& in, std::ostream& out)
     }
 }
 
-static int evaluate(v8::Handle<v8::Value>   *result,
+static int evaluate(v8::Isolate             *isolate,
+                    v8::Handle<v8::Value>   *result,
                     v8::Handle<v8::Message> *errorMessage,
                     const std::string&       input,
                     const std::string&       inputName)
@@ -88,16 +89,22 @@ static int evaluate(v8::Handle<v8::Value>   *result,
     v8::TryCatch tryCatch;
 
     // Load the input string
-    auto source = v8::String::New(input.data(), input.length());
+    auto source = v8::String::NewFromUtf8(isolate,
+                                          input.data(),
+                                          v8::String::kNormalString,
+                                          input.length());
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
     }
 
     // Compile it
-    auto script = v8::Script::Compile(source,
-                                      v8::String::New(inputName.data(),
-                                                      inputName.size()));
+    auto script = v8::Script::Compile(
+                             source,
+                             v8::String::NewFromUtf8(isolate,
+                                                     inputName.data(),
+                                                     v8::String::kNormalString,
+                                                     inputName.size()));
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
@@ -113,14 +120,15 @@ static int evaluate(v8::Handle<v8::Value>   *result,
     return 0;
 }
 
-static void evaluateAndPrint(std::ostream&      outStream,
-                             std::ostream&      errorStream,
-                             const std::string& input,
-                             const std::string& inputName)
+static void evaluateAndPrint(v8::Isolate        *isolate,
+                             std::ostream&       outStream,
+                             std::ostream&       errorStream,
+                             const std::string&  input,
+                             const std::string&  inputName)
 {
     v8::Handle<v8::Value>   result;
     v8::Handle<v8::Message> errorMessage;
-    if (evaluate(&result, &errorMessage, input, inputName)) {
+    if (evaluate(isolate, &result, &errorMessage, input, inputName)) {
         format(errorStream, errorMessage);
     }
     else {
@@ -145,10 +153,11 @@ static int readFile(std::string        *contents,
     return 0;
 }
 
-static int evaluateFile(std::ostream&      outStream,
-                        std::ostream&      errorStream,
-                        const std::string& programName,
-                        const std::string& fileName)
+static int evaluateFile(v8::Isolate        *isolate,
+                        std::ostream&       outStream,
+                        std::ostream&       errorStream,
+                        const std::string&  programName,
+                        const std::string&  fileName)
 {
     std::string input;
     if (readFile(&input, fileName)) {
@@ -157,20 +166,21 @@ static int evaluateFile(std::ostream&      outStream,
         return -1;
     }
 
-    evaluateAndPrint(outStream, errorStream, input, fileName);
+    evaluateAndPrint(isolate, outStream, errorStream, input, fileName);
     return 0;
 }
 
-static void beginReplLoop(std::istream& inStream,
-                          std::ostream& outStream,
-                          std::ostream& errorStream)
+static void beginReplLoop(v8::Isolate   *isolate,
+                          std::istream&  inStream,
+                          std::ostream&  outStream,
+                          std::ostream&  errorStream)
 {
     std::string input;
     int         command = 0;
     while (read(&input, inStream, outStream) == 0) {
         std::ostringstream oss;
         oss << "<stdin:" << ++command << ">";
-        evaluateAndPrint(outStream, errorStream, input, oss.str());
+        evaluateAndPrint(isolate, outStream, errorStream, input, oss.str());
     }
 }
 
@@ -193,14 +203,14 @@ int main(int argc, char *argv[])
     v8::Context::Scope scope(context);
 
     if (argc == 1) {
-        beginReplLoop(std::cin, std::cout, std::cerr);
+        beginReplLoop(isolate, std::cin, std::cout, std::cerr);
     }
     else {
         for (int i = 1; i < argc; ++i) {
             if (argv[i][0] == '-') {
                 switch (argv[i][1]) {
                     case '\0':
-                        beginReplLoop(std::cin, std::cout, std::cerr);
+                        beginReplLoop(isolate, std::cin, std::cout, std::cerr);
                         break;
 
                     case 'h':
@@ -212,10 +222,7 @@ int main(int argc, char *argv[])
                 }
             }
             else {
-                evaluateFile(std::cout,
-                             std::cerr,
-                             argv[0],
-                             argv[i]);
+                evaluateFile(isolate, std::cout, std::cerr, argv[0], argv[i]);
             }
         }
     }
