@@ -6,10 +6,11 @@
 #include <iostream>
 #include <iterator>
 #include <sstream>
+#include <string>
 
 namespace {
 
-static const char *toCString(v8::Handle<v8::Value> value)
+static std::string toCString(v8::Handle<v8::Value> value)
 {
     return *v8::String::Utf8Value(value);
 }
