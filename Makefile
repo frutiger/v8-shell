@@ -1,5 +1,3 @@
-CXX = clang++
-
 release: out/release/v8-shell
 debug:   out/debug/v8-shell
 all:     release debug
