@@ -1,5 +1,6 @@
 // v8-shell.m.cpp                                                     -*-C++-*-
 
+#include <libplatform/libplatform.h>
 #include <v8.h>
 
 #include <fstream>
@@ -9,25 +10,25 @@
 
 namespace {
 
-static const char *toCString(v8::Handle<v8::Value> value)
-{
-    return *v8::String::Utf8Value(value);
-}
+#define STR(isolate, value) \
+    *v8::String::Utf8Value(isolate, value)
 
 static std::ostream& format(std::ostream&           stream,
                             v8::Handle<v8::Message> message)
 {
-    stream << toCString(message->Get()) << '\n';
+    stream << STR(message->GetIsolate(), message->Get()) << '\n';
     auto stack = message->GetStackTrace();
     if (!stack.IsEmpty()) {
         for (int i = 0; i < stack->GetFrameCount(); ++i) {
-            auto frame = stack->GetFrame(i);
+            auto frame = stack->GetFrame(message->GetIsolate(), i);
             stream << "   at ";
-            if (frame->GetFunctionName()->Length()) {
-                stream << toCString(frame->GetFunctionName()) << " ";
+            if (!frame->GetFunctionName().IsEmpty()) {
+                stream << STR(message->GetIsolate(),
+                              frame->GetFunctionName()) << " ";
             }
-            stream << "(" << toCString(frame->GetScriptName()) << ":"
-                << frame->GetLineNumber()      << ":"
+            stream << "(" << STR(message->GetIsolate(),
+                                 frame->GetScriptName()) << ":"
+                << frame->GetLineNumber() << ":"
                 << frame->GetColumn()
                 << ")"
                 << std::endl;
@@ -36,13 +37,10 @@ static std::ostream& format(std::ostream&           stream,
     return stream;
 }
 
-static std::ostream& format(std::ostream&         stream,
-                            v8::Handle<v8::Value> value)
-{
-    return stream << toCString(value) << std::endl;
-}
-
-static int read(std::string *result, std::istream& in, std::ostream& out)
+static int read(v8::Isolate   *isolate,
+                std::string   *result,
+                std::istream&  in,
+                std::ostream&  out)
 {
     result->clear();
 
@@ -60,6 +58,9 @@ static int read(std::string *result, std::istream& in, std::ostream& out)
                 if (escape) {
                     out << "... ";
                     escape = false;
+                }
+                else if (result->empty()) {
+                    return -1;
                 }
                 else {
                     return 0;
@@ -79,53 +80,69 @@ static int read(std::string *result, std::istream& in, std::ostream& out)
     }
 }
 
-static int evaluate(v8::Handle<v8::Value>   *result,
+static int evaluate(v8::Isolate             *isolate,
+                    v8::Handle<v8::Context>  context,
+                    v8::Handle<v8::Value>   *result,
                     v8::Handle<v8::Message> *errorMessage,
                     const std::string&       input,
                     const std::string&       inputName)
 {
     // This will catch errors within this scope
-    v8::TryCatch tryCatch;
+    v8::TryCatch tryCatch(isolate);
 
+    // Load the input name
+    auto name = v8::String::NewFromUtf8(isolate,
+                                        inputName.data(),
+                                        v8::NewStringType::kNormal,
+                                        inputName.length()).ToLocalChecked();
+    if (tryCatch.HasCaught()) {
+        *errorMessage = tryCatch.Message();
+        return -1;
+    }
+
+    auto origin = v8::ScriptOrigin(isolate, name);
     // Load the input string
-    auto source = v8::String::New(input.data(), input.length());
+    auto source = v8::String::NewFromUtf8(isolate,
+                                          input.data(),
+                                          v8::NewStringType::kNormal,
+                                          input.length()).ToLocalChecked();
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
     }
 
     // Compile it
-    auto script = v8::Script::Compile(source,
-                                      v8::String::New(inputName.data(),
-                                                      inputName.size()));
+    auto script = v8::Script::Compile(context, source, &origin);
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
     }
 
     // Evaluate it
-    *result = script->Run();
+    auto maybeResult = script.ToLocalChecked()->Run(context);
     if (tryCatch.HasCaught()) {
         *errorMessage = tryCatch.Message();
         return -1;
     }
+    *result = maybeResult.ToLocalChecked();
 
     return 0;
 }
 
-static void evaluateAndPrint(std::ostream&      outStream,
-                             std::ostream&      errorStream,
-                             const std::string& input,
-                             const std::string& inputName)
+static void evaluateAndPrint(v8::Isolate            *isolate,
+                             v8::Local<v8::Context>  context,
+                             std::ostream&           outStream,
+                             std::ostream&           errorStream,
+                             const std::string&      input,
+                             const std::string&      inputName)
 {
     v8::Handle<v8::Value>   result;
     v8::Handle<v8::Message> errorMessage;
-    if (evaluate(&result, &errorMessage, input, inputName)) {
+    if (evaluate(isolate, context, &result, &errorMessage, input, inputName)) {
         format(errorStream, errorMessage);
     }
-    else {
-        outStream << "-> ";
-        format(outStream, result);
+    else if (result != v8::Undefined(isolate)) {
+        outStream << "-> " << STR(isolate, result) << '\n';
     }
 }
 
@@ -145,7 +162,9 @@ static int readFile(std::string        *contents,
     return 0;
 }
 
-static int evaluateFile(std::ostream&      outStream,
+static int evaluateFile(v8::Isolate            *isolate,
+                             v8::Local<v8::Context>  context,
+                             std::ostream&      outStream,
                         std::ostream&      errorStream,
                         const std::string& programName,
                         const std::string& fileName)
@@ -157,20 +176,27 @@ static int evaluateFile(std::ostream&      outStream,
         return -1;
     }
 
-    evaluateAndPrint(outStream, errorStream, input, fileName);
+    evaluateAndPrint(isolate, context, outStream, errorStream, input, fileName);
     return 0;
 }
 
-static void beginReplLoop(std::istream& inStream,
-                          std::ostream& outStream,
-                          std::ostream& errorStream)
+static void beginReplLoop(v8::Isolate            *isolate,
+                             v8::Local<v8::Context>  context,
+                          std::istream&  inStream,
+                          std::ostream&  outStream,
+                          std::ostream&  errorStream)
 {
     std::string input;
     int         command = 0;
-    while (read(&input, inStream, outStream) == 0) {
+    while (read(isolate, &input, inStream, outStream) == 0) {
         std::ostringstream oss;
         oss << "<stdin:" << ++command << ">";
-        evaluateAndPrint(outStream, errorStream, input, oss.str());
+        evaluateAndPrint(isolate,
+                         context,
+                         outStream,
+                         errorStream,
+                         input,
+                         oss.str());
     }
 }
 
@@ -179,46 +205,71 @@ static void beginReplLoop(std::istream& inStream,
 int main(int argc, char *argv[])
 {
     // Initialize global v8 variables
-    auto *isolate = v8::Isolate::GetCurrent();
-    v8::V8::SetCaptureStackTraceForUncaughtExceptions(
-                                                    true,
-                                                    0x100,
-                                                    v8::StackTrace::kDetailed);
 
-    // Stack-local storage
-    v8::HandleScope handles(isolate);
+    auto platform = v8::platform::NewDefaultPlatform();
+    v8::V8::InitializePlatform(platform.get());
 
-    // Create and enter a context
-    auto               context = v8::Context::New(isolate);
-    v8::Context::Scope scope(context);
+    v8::V8::Initialize();
 
-    if (argc == 1) {
-        beginReplLoop(std::cin, std::cout, std::cerr);
-    }
-    else {
-        for (int i = 1; i < argc; ++i) {
-            if (argv[i][0] == '-') {
-                switch (argv[i][1]) {
-                    case '\0':
-                        beginReplLoop(std::cin, std::cout, std::cerr);
-                        break;
+    v8::Isolate::CreateParams  isolateParams;
+    isolateParams.array_buffer_allocator =
+                             v8::ArrayBuffer::Allocator::NewDefaultAllocator();
+    auto                      *isolate = v8::Isolate::New(isolateParams);
+    {
+        v8::Isolate::Scope         isolateScope(isolate);
 
-                    case 'h':
-                    default:
-                        std::cout
-                                << "Usage: " << argv[0] << " [<filename> | -]*"
-                                << std::endl;
-                        break;
-                }
+        isolate->SetCaptureStackTraceForUncaughtExceptions(
+                                                        true,
+                                                        0x100,
+                                                        v8::StackTrace::kDetailed);
+
+        // Stack-local storage
+        v8::HandleScope handles(isolate);
+
+        // Create and enter a context
+        auto               context = v8::Context::New(isolate);
+        {
+            v8::Context::Scope scope(context);
+
+            if (argc == 1) {
+                beginReplLoop(isolate, context, std::cin, std::cout, std::cerr);
             }
             else {
-                evaluateFile(std::cout,
-                             std::cerr,
-                             argv[0],
-                             argv[i]);
+                for (int i = 1; i < argc; ++i) {
+                    if (argv[i][0] == '-') {
+                        switch (argv[i][1]) {
+                            case '\0':
+                                beginReplLoop(isolate,
+                                              context,
+                                              std::cin,
+                                              std::cout,
+                                              std::cerr);
+                                break;
+
+                            case 'h':
+                            default:
+                                std::cout
+                                        << "Usage: " << argv[0] << " [<filename> | -]*"
+                                        << std::endl;
+                                break;
+                        }
+                    }
+                    else {
+                        evaluateFile(isolate,
+                                     context,
+                                     std::cout,
+                                     std::cerr,
+                                     argv[0],
+                                     argv[i]);
+                    }
+                }
             }
         }
     }
+    isolate->Dispose();
+
+    v8::V8::Dispose();
+    v8::V8::DisposePlatform();
 
     return 0;
 }
