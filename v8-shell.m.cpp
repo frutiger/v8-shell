@@ -200,6 +200,57 @@ static void beginReplLoop(v8::Isolate            *isolate,
     }
 }
 
+static void print(const v8::FunctionCallbackInfo<v8::Value>& args)
+{
+    for (int i = 0; i < args.Length(); ++i) {
+        std::cout << (i == 0 ? "" : ",") << STR(args.GetIsolate(), args[i]);
+    }
+    std::cout << std::endl;
+
+    args.GetReturnValue().SetUndefined();
+}
+
+static void read(const v8::FunctionCallbackInfo<v8::Value>& args)
+{
+    if (args.Length() == 0) {
+        args.GetIsolate()->ThrowException(
+            v8::Exception::Error(
+                v8::String::NewFromUtf8Literal(
+                                 args.GetIsolate(),
+                                 "Required argument 1 'fileName' not found")));
+        args.GetReturnValue().SetUndefined();
+        return;
+    }
+
+    if (!args[0]->IsString()) {
+        args.GetIsolate()->ThrowException(
+            v8::Exception::Error(
+                v8::String::NewFromUtf8Literal(
+                                args.GetIsolate(),
+                                "Required argument 1 'fileName' not string")));
+        args.GetReturnValue().SetUndefined();
+        return;
+    }
+
+    std::string contents;
+    if (readFile(&contents, STR(args.GetIsolate(),
+                                args[0].As<v8::String>()))) {
+        args.GetIsolate()->ThrowException(
+            v8::Exception::Error(
+                v8::String::NewFromUtf8Literal(args.GetIsolate(),
+                                               "Failed to read file")));
+        args.GetReturnValue().SetUndefined();
+        return;
+    }
+
+    v8::Local<v8::String> result = v8::String::NewFromUtf8(args.GetIsolate(),
+                                                           contents.data(),
+                                                           v8::NewStringType::kNormal,
+                                                           contents.size())
+                                              .ToLocalChecked();
+    args.GetReturnValue().Set(result);
+}
+
 }  // close unnamed namespace
 
 int main(int argc, char *argv[])
@@ -230,6 +281,23 @@ int main(int argc, char *argv[])
         auto               context = v8::Context::New(isolate);
         {
             v8::Context::Scope scope(context);
+
+            // Embed the 'print' function
+            v8::Handle<v8::FunctionTemplate> printTemplate =
+                                            v8::FunctionTemplate::New(isolate, &print);
+            context->Global()->Set(context,
+                                   v8::String::NewFromUtf8Literal(isolate, "print"),
+                                   printTemplate->GetFunction(context)
+                                                .ToLocalChecked())
+                             .Check();
+
+            // Embed the 'read' function
+            v8::Handle<v8::FunctionTemplate> readTemplate =
+                                             v8::FunctionTemplate::New(isolate, &read);
+            context->Global()->Set(context,
+                                   v8::String::NewFromUtf8Literal(isolate, "read"),
+                                   readTemplate->GetFunction(context).ToLocalChecked())
+                             .Check();
 
             if (argc == 1) {
                 beginReplLoop(isolate, context, std::cin, std::cout, std::cerr);
